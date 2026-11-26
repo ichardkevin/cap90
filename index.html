@@ -109,7 +109,7 @@ ul.ex{margin:6px 0 0;padding-left:18px;font-size:.92rem}ul.ex li{margin:3px 0}
 <input type="file" id="bakIn" accept=".json,application/json" hidden>
 <script>
 'use strict';
-const APPV='1.3';
+const APPV='1.4';
 /* ================= utilitaires ================= */
 const $=(s,r=document)=>r.querySelector(s);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -148,6 +148,8 @@ const dget=d=>S.days[d]||{};
 const stepsOf=km=>Math.round(km*1000/(0.415*(S.profile.height||188)/100));
 const estSteps=d=>S.acts.filter(a=>a.date===d&&a.type==='marche'&&a.dist).reduce((n,a)=>n+stepsOf(a.dist),0);
 const fmtN=n=>Math.round(n).toLocaleString('fr-FR');
+const hrA=a=>a.hrAvg||(a.stats?.hr?Math.round(a.stats.hr.avg):null);
+const recTxt=a=>a.hrEnd&&a.hr1?(a.hrEnd>a.hr1?`Récupération : −${a.hrEnd-a.hr1} battements en 1 minute.`:'La FC après 1 min devrait être plus basse que celle de fin d’effort.'):'';
 
 /* ================= programme ================= */
 const TYPES={
@@ -384,6 +386,7 @@ function dayChecks(d){const D=dget(d),tr=S.travel&&d===today();
   let h=`<button class="chk ${D.walk?'on':''}" data-a="walk" data-d="${d}">🐕 <span>${tr?'10 min de marche (pause trajet, tour de l’hôtel)':'Marche du soir avec le chien'}</span><b>${D.walk?'✔':'+10 XP'}</b></button>
   <label>Alimentation du jour</label><div class="seg3">${[['effort','💪 Effort'],['normal','👌 Normale'],['exces','🍕 Excès']].map(([k,l])=>`<button class="${D.food===k?'on '+k:''}" data-a="food" data-d="${d}" data-k="${k}">${l}</button>`).join('')}</div>`;
   const es=estSteps(d);h+=`<div class="row cnt"><span class="g">👟 Pas du jour <span class="mut small">${es?'(GPS : ≈ '+fmtN(es)+')':'(chiffre de ta montre)'}</span></span><input type="number" inputmode="numeric" min="0" style="width:104px;text-align:right" data-steps="${d}" value="${D.steps??''}" placeholder="${es?'≈ '+fmtN(es):'–'}"></div>`;
+  h+=`<div class="row cnt"><span class="g">❤️ FC au repos <span class="mut small">(montre, le matin)</span></span><input type="number" inputmode="numeric" min="30" max="130" style="width:104px;text-align:right" data-rhr="${d}" value="${D.rhr??''}" placeholder="bpm"></div>`;
   if(S.settings.conso)h+=[['cig','🚬 Cigarettes'],['coca','🥤 Coca']].map(([k,l])=>`<div class="row cnt"><span class="g">${l}</span><button data-a="cnt" data-d="${d}" data-k="${k}" data-n="-1">−</button><b>${D[k]??'–'}</b><button data-a="cnt" data-d="${d}" data-k="${k}" data-n="1">+</button></div>`).join('');
   return h}
 function vToday(x,L){const d=today(),D=dget(d),ws=weekStats(monday(d)),p=ws.plan,pr=S.profile,cur=curW();
@@ -450,6 +453,10 @@ function actDetail(a){const s=a.stats;let h=`<h2>${TYPES[a.type].i} ${TYPES[a.ty
   if(a.sets)h+=`<ul class="ex">${a.sets.filter(x=>x.done.length).map(x=>`<li>${EX[x.id].variants[x.v].n} : <b>${x.done.join(' · ')}</b>${EX[x.id].unit==='sec'?' s':''} <span class="mut">(cible ${x.t})</span></li>`).join('')}</ul>`;
   if(a.prs?.length)h+=`<p class="amb">🏅 Records : ${a.prs.map(esc).join(', ')}</p>`;
   if(a.note)h+=`<p>${esc(a.note)}</p>`;
+  const hi=(k,l,v)=>`<div><label>${l}</label><input type="number" inputmode="numeric" placeholder="bpm" data-ah="${k}" data-id="${a.id}" value="${v??''}"></div>`;
+  h+=`<h3 style="margin-top:16px">❤️ Fréquence cardiaque</h3><div class="grid2" style="margin:0">${hi('hrAvg','Moyenne',hrA(a))}${hi('hrMax','Maximum',a.hrMax??a.stats?.hr?.max)}${hi('hrEnd','En fin d’effort',a.hrEnd)}${hi('hr1','Après 1 min de repos',a.hr1)}</div>
+    <div class="btns"><button id="rec-b" data-a="rec1">⏱ Chrono 1 min de récup</button></div><p class="small acc" id="hr-rec" style="margin:8px 0 0">${recTxt(a)}</p>
+    <p class="mut small" style="margin:6px 0 0">Mesurer la récup : à la fin de l’effort, lis ta FC sur la montre, lance le chrono, reste debout sans bouger, puis relis ta FC au bip. Plus elle chute, mieux ton cœur récupère.</p>`;
   openModal(h+`<div class="btns"><button class="warn" data-a="delAct" data-id="${a.id}">Supprimer</button></div>`)}
 function actForm(o={}){const t=o.type||'jardin';F={type:t,rpe:3};const st=pending?analyze(pending.pts,thrOf(t)):null;
   const types=Object.entries(TYPES).filter(([k,v])=>pending?v.gps:true);
@@ -460,13 +467,14 @@ function actForm(o={}){const t=o.type||'jardin';F={type:t,rpe:3};const st=pendin
   ${pending?'':`<label>Durée (minutes)</label><input type="number" id="f-dur" inputmode="numeric" min="1" placeholder="30">
   <div class="fd"><label>Distance (km, facultatif)</label><input type="number" id="f-dist" inputmode="decimal" step="0.1" min="0"></div>`}
   <div class="fj"><label>Travail</label><select id="f-sub">${JARDIN.map(j=>`<option>${j}</option>`).join('')}</select></div>
+  <div class="grid2" style="margin:0"><div><label>FC moyenne (facultatif)</label><input type="number" id="f-hra" inputmode="numeric" placeholder="bpm"></div><div><label>FC max (facultatif)</label><input type="number" id="f-hrm" inputmode="numeric" placeholder="bpm"></div></div>
   <label>Ressenti</label><div class="chips" id="f-rpe" style="margin-top:0">${RPE.map((r,i)=>`<button class="${i===2?'on':''}" data-a="frpe" data-k="${i+1}">${r}</button>`).join('')}</div>
   <label>Note (facultatif)</label><input id="f-note" maxlength="200">
   <div class="btns"><button class="pri" data-a="saveAct">Enregistrer</button></div></div>`)}
 
 /* ================= vue Progrès ================= */
-const SUBS=[['poids','⚖️ Poids'],['photos','📸 Photos'],['cardio','🚵 Cardio'],['force','💪 Force'],['habits','🍽️ Habitudes'],['badges','🏅 Badges']];
-function vProg(){return`<div class="chips" style="margin:0 0 12px">${SUBS.map(([k,l])=>`<button class="${sub===k?'on':''}" data-a="sub" data-k="${k}">${l}</button>`).join('')}</div>`+{poids:pPoids,photos:pPhotos,cardio:pCardio,force:pForce,habits:pHabits,badges:pBadges}[sub]()}
+const SUBS=[['poids','⚖️ Poids'],['photos','📸 Photos'],['cardio','🚵 Cardio'],['force','💪 Force'],['coeur','❤️ Cœur'],['habits','🍽️ Habitudes'],['badges','🏅 Badges']];
+function vProg(){return`<div class="chips" style="margin:0 0 12px">${SUBS.map(([k,l])=>`<button class="${sub===k?'on':''}" data-a="sub" data-k="${k}">${l}</button>`).join('')}</div>`+{poids:pPoids,photos:pPhotos,cardio:pCardio,force:pForce,habits:pHabits,coeur:pCoeur,badges:pBadges}[sub]()}
 function pPoids(){const pr=S.profile,W=S.weights,tot=diffDays(pr.start,pr.goalDate),el=clamp(diffDays(pr.start,today()),0,tot);
   const exp=pr.startWeight-(pr.startWeight-pr.goalWeight)*(tot?el/tot:1),cur=curW(),dl=cur-exp,wl=Math.max(1,diffDays(today(),pr.goalDate))/7;
   const ys=[pr.startWeight,pr.goalWeight,...W.map(w=>w.kg)];
@@ -506,6 +514,17 @@ function pForce(){const T=S.tests;const prs=S.acts.flatMap(a=>(a.prs||[]).map(p=
     ${T.length?`<b class="small">Pompes max</b>${chart([{pts:T.map(t=>[dayX(t.date),t.pompes]),dots:1}],{xf:xDate,y0:0,h:120})}<b class="small">Planche max (s)</b>${chart([{pts:T.map(t=>[dayX(t.date),t.planche]),dots:1,c:'#6cc5ff'}],{xf:xDate,y0:0,h:120})}`:'<p class="mut small">Pas encore de test.</p>'}</div>
   <div class="card"><h3>Derniers records</h3>${prs.length?prs.map(x=>`<div class="li"><span>🏅</span><span class="g">${esc(x.p)}</span><span class="mut small">${fmtD(x.d,{day:'numeric',month:'short'})}</span></div>`).join(''):'<p class="mut small">Tes records de séance apparaîtront ici.</p>'}</div>
   <div class="card"><h3>Volume</h3><div class="grid3" style="margin:0"><div class="stat"><b>${S.acts.filter(a=>a.type==='renfo').length}</b><span>séances muscu</span></div><div class="stat"><b>${S.acts.filter(a=>a.type==='hotel').length}</b><span>plans B</span></div><div class="stat"><b>${Object.values(S.days).reduce((s,d)=>s+(d.micro||0),0)}</b><span>micro-défis</span></div></div></div>`}
+function pCoeur(){const rh=Object.entries(S.days).filter(([d,D])=>D.rhr).sort((a,b)=>a[0].localeCompare(b[0])).map(([d,D])=>[dayX(d),D.rhr]);
+  const A=[...S.acts].sort((a,b)=>a.date.localeCompare(b.date));
+  const rec=A.filter(a=>a.hrEnd&&a.hr1&&a.hrEnd>a.hr1).map(a=>[dayX(a.date),a.hrEnd-a.hr1]);
+  const spd=a=>a.stats?.avg||(a.dist&&a.dur?a.dist/(a.dur/60):null);
+  const eff=A.filter(a=>(a.type==='velo'||a.type==='frac')&&hrA(a)&&spd(a)).map(a=>[dayX(a.date),spd(a)/hrA(a)*100]);
+  const ses=A.filter(a=>hrA(a)).map(a=>[dayX(a.date),hrA(a)]);
+  const dl=(pts,good)=>{if(pts.length<2)return'';const d=pts[pts.length-1][1]-pts[0][1];return`<span class="pill ${d*good>0?'acc':d?'amb':''}">${d>0?'+':''}${n1(d,Math.abs(d)<10&&d%1?1:0)} depuis le début</span>`};
+  return`<div class="card"><h3>FC au repos (bpm) ${dl(rh,-1)}</h3>${chart([{pts:rh,dots:1,c:'#ff6b6b'}],{xf:xDate})}<p class="mut small" style="margin:6px 0 0">À saisir dans le check du jour, d’après ta montre. Elle baisse quand le cœur devient plus efficace : c’est l’indicateur de fond le plus parlant.</p></div>
+  <div class="card"><h3>Récupération en 1 min ${dl(rec,1)}</h3>${chart([{pts:rec,dots:1}],{xf:xDate,y0:0})}<p class="mut small" style="margin:6px 0 0">Nombre de battements perdus une minute après l’effort. Plus ça monte, plus vite tu récupères. À mesurer depuis la fiche d’une activité.</p></div>
+  <div class="card"><h3>Vélo : vitesse pour 100 bpm ${dl(eff,1)}</h3>${chart([{pts:eff,dots:1,c:'#6cc5ff'}],{xf:xDate,dec:1})}<p class="mut small" style="margin:6px 0 0">Vitesse moyenne rapportée à ta FC moyenne. Si ça monte, tu vas plus vite pour le même effort du cœur.</p></div>
+  <div class="card"><h3>FC moyenne par séance</h3>${chart([{pts:ses,dots:1,c:'#ffb454'}],{xf:xDate})}</div>`}
 function pHabits(){const weeks=weeksList().reverse().slice(0,10);
   const sp=[];for(let d=S.profile.start;d<=today();d=addDays(d,1)){const v=dget(d).steps||estSteps(d);if(v)sp.push([dayX(d),v])}
   const l7=[...Array(7)].map((_,i)=>{const d=addDays(today(),-i);return dget(d).steps||estSteps(d)}).filter(Boolean);
@@ -548,7 +567,7 @@ function finishRun(){const dur=Math.max(1,Math.round((Date.now()-R.t0)/60000)),p
   openModal(`<h2 class="center">Séance bouclée 💥</h2><p class="center mut">${dur} min · +${TYPES[a.type].xp+prs.length*15} XP</p>
     ${prs.length?`<p class="amb"><b>🏅 Records battus</b><br>${prs.map(esc).join('<br>')}</p>`:''}
     ${ups.length?`<p><b>La prochaine fois</b></p><ul class="ex">${ups.map(u=>`<li>${u}</li>`).join('')}</ul>`:'<p class="mut">Mêmes cibles la prochaine fois : on consolide.</p>'}
-    ${m.length?`<p class="acc">${m.join('<br>')}</p>`:''}<div class="btns"><button class="pri" data-a="close">Continuer</button></div>`)}
+    ${m.length?`<p class="acc">${m.join('<br>')}</p>`:''}<div class="btns"><button data-a="act" data-id="${a.id}">❤️ Noter ma fréquence cardiaque</button><button class="pri" data-a="close">Continuer</button></div>`)}
 
 /* ================= GPS en direct ================= */
 function gpsOpen(t){if(!navigator.geolocation)return toast('GPS indisponible sur cet appareil');G={type:t,pts:[],t0:null,run:false,dist:0,pausedAt:null,pausedMs:0,spd:0,acc:null,brk:false,watch:null};drawGps()}
@@ -569,6 +588,7 @@ setInterval(()=>{const now=Date.now();
     else if(R.sw){const s=(now-R.sw)/1000,el=$('#r-sw');if(el)el.textContent=Math.floor(s)+' s';if(!R.beeped&&s>=R.cur.t){R.beeped=1;beep();buzz(150)}}}
   if(G&&G.t0&&$('#g-time')){const e=gpsEl();$('#g-time').textContent=clock(e);$('#g-dist').textContent=n1(G.dist/1000,2);$('#g-spd').textContent=n1(G.run?G.spd:0);$('#g-avg').textContent=n1(e>5?G.dist/e*3.6:0);
     $('#g-acc').textContent=G.acc==null?'Recherche du signal GPS…':G.acc>35?`Signal faible (±${Math.round(G.acc)} m), points ignorés`:`Signal OK (±${Math.round(G.acc)} m) · ${G.pts.length} points`}
+  if(recT){const l=(recT-now)/1000,b=$('#rec-b');if(l<=0){recT=null;beep();buzz(300);if(b)b.textContent='✔ 1 minute : relis ta FC maintenant';$('[data-ah=hr1]')?.focus()}else if(b)b.textContent='⏱ '+Math.ceil(l)+' s… reste immobile'}
   if(today()!==curDay){curDay=today();pick=null;if($('#modal').hidden)render()}
 },250);
 
@@ -586,7 +606,7 @@ function testForm(){openModal(`<h2>🧪 Test de forme</h2><p class="mut small">�
 function dayModal(d){openModal(`<h2>${fmtD(d,{weekday:'long',day:'numeric',month:'long'})}</h2><div style="margin-top:12px">${dayChecks(d)}</div>
   ${S.acts.filter(a=>a.date===d).map(a=>`<div class="li"><span class="ic">${TYPES[a.type].i}</span><span class="g">${TYPES[a.type].n}<div class="mut small">${actSum(a)}</div></span></div>`).join('')}
   <div class="btns"><button data-a="form" data-d="${d}">＋ Ajouter une activité ce jour</button></div>`);dayOpen=d}
-let dayOpen=null;
+let dayOpen=null,recT=null;
 function settingsForm(){const p=S.profile,s=S.settings;navigator.storage?.persisted?.().then(ok=>{const e=$('#st-p');if(e)e.textContent=ok?'Stockage protégé contre l’effacement automatique ✔':'Stockage non protégé : installe l’app sur l’écran d’accueil et fais des sauvegardes.'});
   openModal(`<h2>Réglages</h2>
   <h3 style="margin-top:16px">Objectif</h3>
@@ -643,7 +663,7 @@ const A={
   food(d){const D=day(d.d);D.food=D.food===d.k?null:d.k;buzz(30);after(D.food?{effort:'+15 XP 💪',normal:'+10 XP 👌',exces:'Noté, sans jugement. +3 XP pour l’honnêteté'}[D.food]:'');if(dayOpen)dayModal(dayOpen)},
   cnt(d){const D=day(d.d);D[d.k]=Math.max(0,(D[d.k]||0)+ +d.n);save();render();if(dayOpen)dayModal(dayOpen)},
   micro(){const D=day(today());D.micro=(D.micro||0)+1;buzz(40);after(D.micro<=3?'+5 XP ⚡':'Bonus pour la gloire 💪')},
-  run(d){startRun(d.k)},exo(d){exoModal(d.id)},
+  run(d){startRun(d.k)},exo(d){exoModal(d.id)},rec1(){recT=Date.now()+60000;beep(660,100);wake()},
   rstep(d){R.val=Math.max(0,R.val+ +d.n);$('#r-val').textContent=R.val},
   rdone(){runSet(R.val)},rskip(){runSet(0)},
   rsw(){if(!R.sw){R.sw=Date.now();const b=$('#r-swb');b.textContent='⏹ Stop';beep(660,100)}else runSet(Math.round((Date.now()-R.sw)/1000))},
@@ -661,6 +681,7 @@ const A={
   frpe(d,el){F.rpe=+d.k;el.parentNode.querySelectorAll('button').forEach(b=>b.classList.toggle('on',b===el))},
   async saveAct(){const a={id:uid(),date:$('#f-date').value||today(),type:F.type,rpe:F.rpe,note:$('#f-note').value.trim()};
     if(F.type==='jardin')a.sub=$('#f-sub').value;
+    for(const[k,i]of[['hrAvg','#f-hra'],['hrMax','#f-hrm']]){const v=Math.round(+$(i).value);if(v>=30&&v<=230)a[k]=v}
     if(pending){const st=analyze(pending.pts,thrOf(a.type));if(!st)return toast('Trace inexploitable');await DB.set('tracks',a.id,pending.pts);a.track=1;a.stats=st;a.dist=Math.round(st.dist*100)/100;a.dur=Math.max(1,Math.round(st.mov/60))}
     else{a.dur=+$('#f-dur').value;if(!(a.dur>0))return toast('Indique la durée');const di=+($('#f-dist')?.value||0);if(di>0&&TYPES[a.type].slot!=='renfo'&&a.type!=='jardin'&&a.type!=='autre'&&a.type!=='hotel')a.dist=di}
     if(a.type==='marche')day(a.date).walk=true;
@@ -691,6 +712,8 @@ document.addEventListener('change',e=>{const el=e.target;
   else if(el.id==='bakIn'&&el.files[0])importAll(el.files[0]);
   else if(el.dataset.c==='cmpA'){cmp.a=el.value;render()}else if(el.dataset.c==='cmpB'){cmp.b=el.value;render()}
   else if(el.dataset.steps){const v=Math.round(+el.value);const D=day(el.dataset.steps);const b=xpCalc();if(v>0)D.steps=v;else delete D.steps;const g=xpCalc()-b;after(v>0?`👟 ${fmtN(v)} pas notés${g>0?' · +'+g+' XP':''}`:'');if(dayOpen)dayModal(dayOpen)}
+  else if(el.dataset.rhr){const v=Math.round(+el.value),D=day(el.dataset.rhr);if(v>=30&&v<=130){D.rhr=v;toast('❤️ FC au repos notée : '+v+' bpm')}else delete D.rhr;save()}
+  else if(el.dataset.ah){const a=S.acts.find(x=>x.id===el.dataset.id);if(!a)return;const v=Math.round(+el.value);if(v>=30&&v<=230)a[el.dataset.ah]=v;else delete a[el.dataset.ah];save();const r=$('#hr-rec');if(r)r.textContent=recTxt(a)}
   else if(el.dataset.s){const path=el.dataset.s.split('.');let o=S;while(path.length>1)o=o[path.shift()];
     const v=el.type==='checkbox'?el.checked:el.type==='number'?+el.value:el.value;if(el.type==='number'&&!(v>0))return;if(el.type==='date'&&!v)return;o[path[0]]=v;save();
     if(el.dataset.s.startsWith('settings.thr'))recompute();else render()}});
