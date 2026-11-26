@@ -104,11 +104,12 @@ ul.ex{margin:6px 0 0;padding-left:18px;font-size:.92rem}ul.ex li{margin:3px 0}
 <div id="modal" hidden></div>
 <canvas id="confetti"></canvas>
 <div id="toast"></div>
-<input type="file" id="gpxIn" accept=".gpx,application/gpx+xml,text/xml,application/xml" hidden>
+<input type="file" id="gpxIn" accept=".gpx,.tcx,application/gpx+xml,text/xml,application/xml,application/octet-stream" hidden>
 <input type="file" id="phIn" accept="image/*" hidden>
 <input type="file" id="bakIn" accept=".json,application/json" hidden>
 <script>
 'use strict';
+const APPV='1.3';
 /* ================= utilitaires ================= */
 const $=(s,r=document)=>r.querySelector(s);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -353,7 +354,13 @@ function analyze(pts,thr){const sg=[];let dist=0,gain=0,ref=null,hs=0,hn=0,hm=0;
   const hiT=durs.reduce((a,b)=>a+b,0);
   return{dist:dist/1000,dur:tot,mov,avg:mov?dist/mov*3.6:0,vmax,p10:pc(.1),p90:pc(.9),hiT,hiPct:mov?Math.min(100,hiT/mov*100):0,hiMax:Math.max(0,...durs),hiN:eff.length,rec:avg(recs),
     gain:ref==null?null:gain,hr:hn?{avg:hs/hn,max:hm}:null,thr,series}}
-function parseGPX(txt){const x=new DOMParser().parseFromString(txt,'application/xml'),pts=[];
+function parseGPX(txt){const x=new DOMParser().parseFromString(txt,'application/xml'),pts=[];const tag=(e,n)=>e.getElementsByTagNameNS('*',n)[0];
+  // format TCX (Garmin, Fitbit…) : <Trackpoint> avec <Time>, <Position>, <HeartRateBpm>
+  for(const lap of x.getElementsByTagNameNS('*','Track')){let first=true;
+    for(const p of lap.getElementsByTagNameNS('*','Trackpoint')){const tm=tag(p,'Time'),la=tag(p,'LatitudeDegrees'),lo=tag(p,'LongitudeDegrees');if(!tm||!la||!lo)continue;const t=Date.parse(tm.textContent);if(isNaN(t))continue;
+      const el=tag(p,'AltitudeMeters'),hb=tag(p,'HeartRateBpm'),hr=hb&&tag(hb,'Value');
+      pts.push([t,+la.textContent,+lo.textContent,el?+el.textContent:null,hr?+hr.textContent:null,first&&pts.length?1:0]);first=false}}
+  if(pts.length)return pts;
   for(const seg of x.getElementsByTagNameNS('*','trkseg')){let first=true;
     for(const p of seg.getElementsByTagNameNS('*','trkpt')){const tm=p.getElementsByTagNameNS('*','time')[0];if(!tm)continue;const t=Date.parse(tm.textContent);if(isNaN(t))continue;
       const el=p.getElementsByTagNameNS('*','ele')[0],hr=p.getElementsByTagNameNS('*','hr')[0];
@@ -428,7 +435,7 @@ function vWeek(){const cm=monday(today());wk=wk&&wk<=cm?wk:cm;const first=monday
 /* ================= vue Activités ================= */
 const actSum=a=>[a.sub&&a.type==='jardin'?a.sub:null,a.dur?a.dur+' min':null,a.dist?n1(a.dist)+' km':null,a.stats?n1(a.stats.avg)+' km/h':null,a.type==='marche'&&a.dist?'≈ '+fmtN(stepsOf(a.dist))+' pas':null].filter(Boolean).join(' · ');
 function vActs(){const list=[...S.acts].sort((a,b)=>b.date.localeCompare(a.date)||b.id.localeCompare(a.id));
-  return`<div class="card"><h3>Enregistrer</h3><div class="btns" style="margin-top:0"><button class="pri" data-a="gps" data-t="velo">▶ GPS vélo</button><button data-a="gps" data-t="marche">▶ GPS marche</button><button data-a="gpx">⬆ Importer GPX</button><button data-a="form">＋ Saisie manuelle</button></div>
+  return`<div class="card"><h3>Enregistrer</h3><div class="btns" style="margin-top:0"><button class="pri" data-a="gps" data-t="velo">▶ GPS vélo</button><button data-a="gps" data-t="marche">▶ GPS marche</button><button data-a="gpx">⬆ Importer GPX / TCX</button><button data-a="form">＋ Saisie manuelle</button></div>
   <p class="mut small" style="margin:10px 0 0">GPS en direct : l’écran doit rester allumé (téléphone sur le guidon ou en main). Sinon enregistre avec ta montre et importe le fichier GPX.</p></div>
   <div class="card"><h3>Journal</h3>${list.length?list.map(a=>`<button class="li" data-a="act" data-id="${a.id}"><span class="ic">${TYPES[a.type]?.i||'✨'}</span><span class="g"><b>${TYPES[a.type]?.n||a.type}${a.type==='renfo'?' '+a.sub:''}</b><div class="mut small">${fmtD(a.date)} · ${actSum(a)}</div></span>${a.prs?.length?'<span class="amb">🏅</span>':''}<span class="mut">›</span></button>`).join(''):'<p class="mut small">Rien encore. Ta première séance apparaîtra ici.</p>'}</div>`}
 function actDetail(a){const s=a.stats;let h=`<h2>${TYPES[a.type].i} ${TYPES[a.type].n}${a.type==='renfo'?' · séance '+a.sub:''}</h2><p class="mut">${fmtD(a.date,{weekday:'long',day:'numeric',month:'long'})}${a.rpe?' · '+RPE[a.rpe-1]:''}${a.sub&&a.type==='jardin'?' · '+esc(a.sub):''}${a.type==='marche'&&a.dist?' · ≈ '+fmtN(stepsOf(a.dist))+' pas':''}</p>`;
@@ -597,7 +604,9 @@ function settingsForm(){const p=S.profile,s=S.settings;navigator.storage?.persis
   <div class="btns"><button data-a="ics">📅 Créer mes rappels (.ics)</button></div>
   <h3 style="margin-top:18px">Mes données</h3><p class="mut small" id="st-p" style="margin:4px 0">Tout est stocké sur cet appareil, rien n’est envoyé.</p>
   <div class="btns"><button data-a="export">💾 Sauvegarde complète</button><button data-a="import">Restaurer</button></div>
-  <div class="btns"><button class="warn" data-a="reset">Tout effacer</button></div>`)}
+  <div class="btns"><button class="warn" data-a="reset">Tout effacer</button></div>
+  <h3 style="margin-top:18px">Application</h3><p class="mut small" style="margin:4px 0">Version ${APPV}. Tes données ne sont pas touchées par une mise à jour.</p>
+  <div class="btns"><button data-a="update">🔄 Vérifier les mises à jour</button></div>`)}
 function dl(name,blob){const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),5000)}
 function makeIcs(){const st=S.settings,until=S.profile.goalDate.replace(/-/g,'')+'T235900',stamp=new Date().toISOString().replace(/[-:]|\.\d+/g,'');
   const next=days=>{let d=today();while(!days.includes(parse(d).getDay()))d=addDays(d,1);return d};
@@ -671,11 +680,12 @@ const A={
   phTag(d){phTag=d.k;cmp={a:null,b:null};render()},
   phView(d){const p=S.photos.find(x=>x.id===d.id);openModal(`<p class="mut">${fmtD(p.date,{weekday:'long',day:'numeric',month:'long'})} · ${PHT[p.tag]}</p><img data-ph="${p.id}" style="width:100%;border-radius:12px" alt=""><div class="btns"><button class="warn" data-a="delPh" data-id="${p.id}">Supprimer</button></div>`);fillPhotos()},
   delPh(d){if(!confirm('Supprimer cette photo ?'))return;S.photos=S.photos.filter(x=>x.id!==d.id);DB.del('photos',d.id);closeModal();save();render()},
+  async update(){toast('Recherche de mise à jour…',3000);try{const r=await navigator.serviceWorker?.getRegistration();await r?.update();for(const k of await caches.keys())await caches.delete(k)}catch{}location.reload()},
   settings(){settingsForm()},ics(){makeIcs()},export(){exportAll()},import(){$('#bakIn').value='';$('#bakIn').click()},
   async reset(){if(!confirm('Effacer TOUTES les données de l’app sur cet appareil ?')||!confirm('Vraiment tout ? C’est définitif.'))return;await DB.clear('tracks');await DB.clear('photos');S=DEF();await DB.set('kv','state',S);closeModal();render()}};
 document.addEventListener('click',e=>{const el=e.target.closest('[data-a]');if(!el||el.disabled)return;const f=A[el.dataset.a];if(f)f(el.dataset,el,e)});
 document.addEventListener('change',e=>{const el=e.target;
-  if(el.id==='gpxIn'&&el.files[0]){el.files[0].text().then(t=>{const pts=parseGPX(t);if(pts.length<5)return toast('GPX sans points horodatés : impossible de calculer les vitesses',3500);
+  if(el.id==='gpxIn'&&el.files[0]){el.files[0].text().then(t=>{const pts=parseGPX(t);if(pts.length<5)return toast('Fichier illisible : il faut un GPX ou un TCX avec position et heure à chaque point',4500);
     pending={pts};const st=analyze(pts,thrOf('velo'));actForm({type:F?.type||(st&&st.avg<7?'marche':'velo'),date:iso(new Date(pts[0][0]))})})}
   else if(el.id==='phIn'&&el.files[0])addPhoto(el.files[0],phTag);
   else if(el.id==='bakIn'&&el.files[0])importAll(el.files[0]);
@@ -689,7 +699,9 @@ document.addEventListener('change',e=>{const el=e.target;
 (async()=>{try{const st=await DB.get('kv','state');if(st)S=merge(st);else await DB.set('kv','state',S)}catch(e){toast('Stockage local indisponible : '+e,6000)}
   checkRewards(true);render();
   navigator.storage?.persist?.();
-  if('serviceWorker'in navigator&&!/^(localhost|127\.)/.test(location.hostname))navigator.serviceWorker.register('sw.js').catch(()=>{})})();
+  if('serviceWorker'in navigator&&!/^(localhost|127\.)/.test(location.hostname)){const had=!!navigator.serviceWorker.controller;let done=false;
+    navigator.serviceWorker.addEventListener('controllerchange',()=>{if(had&&!done&&$('#modal').hidden){done=true;location.reload()}});
+    navigator.serviceWorker.register('sw.js').then(r=>r.update()).catch(()=>{})}})();
 </script>
 </body>
 </html>
