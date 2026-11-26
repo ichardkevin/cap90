@@ -137,7 +137,7 @@ const DB=(()=>{let p;
     keys:s=>tx(s,'readonly',o=>o.getAllKeys()),clear:s=>tx(s,'readwrite',o=>o.clear())}})();
 
 const DEF=()=>({v:1,profile:{start:today(),startWeight:100,goalWeight:90,goalDate:'2027-03-17',height:188},
-  settings:{conso:true,thr:{velo:18,marche:5.5},rest:75,sound:true,tMidi:'12:15',tSoir:'21:30',micro:true},
+  settings:{conso:true,thr:{velo:18,marche:5.5},rest:75,sound:true,tMidi:'12:15',tSoir:'21:30',micro:true,stepsGoal:40000},
   days:{},acts:[],weights:[],photos:[],tests:[],prog:{},best:{},lastRenfo:'B',travel:false,badges:{},lastLevel:0,weeksDone:{}});
 let S=DEF();
 let saveT;const save=()=>{clearTimeout(saveT);saveT=setTimeout(()=>DB.set('kv','state',S).catch(e=>toast('Erreur de sauvegarde : '+e)),150)};
@@ -229,12 +229,12 @@ function weekStats(mon){const p=plan(weekNo(mon)),end=addDays(mon,6);
   for(const a of acts){const s=slotOf(a);if(s==='joker')joker++;else if(s)c[s]++;if(a.type==='frac')frac++}
   let extra=Math.max(0,c.renfo-p.renfo)+Math.max(0,c.cardio-p.cardio)+joker;
   for(const k of['renfo','cardio','libre'])while(c[k]<p[k]&&extra>0){c[k]++;extra--}
-  let walk=0;const food={effort:0,normal:0,exces:0};
-  for(let i=0;i<7;i++){const D=dget(addDays(mon,i));if(D.walk)walk++;if(D.food)food[D.food]++}
+  let walk=0,steps=0;const food={effort:0,normal:0,exces:0},stepsGoal=S.settings.stepsGoal||40000;
+  for(let i=0;i<7;i++){const d=addDays(mon,i),D=dget(d);if(D.walk)walk++;if(D.food)food[D.food]++;steps+=D.steps||estSteps(d)}
   const weighed=S.weights.some(x=>x.date>=mon&&x.date<=end),tested=S.tests.some(x=>x.date>=mon&&x.date<=end);
   const valid=c.renfo>=p.renfo&&c.cardio>=p.cardio&&c.libre>=p.libre&&walk>=p.walk;
   const foodOk=food.effort>=2&&food.exces<=1&&food.effort+food.normal+food.exces>=6;
-  return{plan:p,...c,frac,walk,food,weighed,tested,valid,foodOk,perfect:valid&&foodOk&&weighed,acts}}
+  return{plan:p,...c,frac,walk,steps,stepsGoal,stepsOk:steps>=stepsGoal,food,weighed,tested,valid,foodOk,perfect:valid&&foodOk&&weighed,acts}}
 function suggest(){const d=today(),ws=weekStats(monday(d)),p=ws.plan;
   if(S.travel)return'hotel';
   const y=addDays(d,-1),yR=S.acts.some(a=>a.date===y&&(a.type==='renfo'||a.type==='hotel'));
@@ -265,7 +265,7 @@ function xpCalc(){let x=0;
   for(const d in S.days){const D=S.days[d];if(D.walk)x+=10;if(D.food)x+={effort:15,normal:10,exces:3}[D.food];x+=Math.min(D.micro||0,3)*5}
   for(const a of S.acts)x+=(TYPES[a.type]?.xp||20)+(a.prs?.length||0)*15;
   x+=S.weights.length*20+S.tests.length*30+S.photos.length*10;
-  for(const m of weeksList()){const w=weekStats(m);if(w.valid)x+=100;if(w.perfect)x+=50}
+  for(const m of weeksList()){const w=weekStats(m);if(w.valid)x+=100;if(w.perfect)x+=50;x+=Math.floor(Math.min(w.steps,w.stepsGoal)/1000)*2;if(w.stepsOk)x+=50}
   return x}
 function level(x){let n=1;while(x>=LV[n])n++;return{n,name:LVN[n-1],pct:(x-LV[n-1])/(LV[n]-LV[n-1])*100,next:LV[n]-x}}
 function streak(){const set=new Set(S.acts.map(a=>a.date));const act=d=>dget(d).walk||set.has(d);
@@ -300,6 +300,7 @@ function checkRewards(quiet){const msgs=[];
   const mon=monday(today()),ws=weekStats(mon);
   if(ws.valid&&!S.weeksDone[mon]){S.weeksDone[mon]=1;msgs.push('🏆 Semaine validée ! +100 XP')}
   if(ws.perfect&&S.weeksDone[mon]!==2){S.weeksDone[mon]=2;msgs.push('💎 Semaine parfaite ! +50 XP')}
+  if(ws.stepsOk&&!S.weeksDone[mon+'s']){S.weeksDone[mon+'s']=1;msgs.push(`👟 ${fmtN(ws.stepsGoal)} pas cette semaine ! +50 XP`)}
   const lv=level(xpCalc()).n;if(lv>S.lastLevel){if(S.lastLevel>0)msgs.push(`⬆️ Niveau ${lv} : ${LVN[lv-1]}`);S.lastLevel=lv}
   if(msgs.length&&!quiet){confetti();buzz([60,40,120]);toast(msgs.join('<br>'),4500)}
   return msgs}
@@ -371,7 +372,7 @@ function openModal(h,lock){const m=$('#modal');m.className=lock?'lock':'';m.inne
 function closeModal(){$('#modal').hidden=true;$('#modal').innerHTML='';pending=null}
 
 /* ================= vue Aujourd'hui ================= */
-function mis(label,n,q,extra=''){if(!q)return'';const ok=n>=q;return`<div class="mis"><div class="row"><span class="g">${label}</span><span class="${ok?'ok':'mut'}">${ok?'✔ ':''}${n}/${q}${extra}</span></div><div class="bar"><i style="width:${clamp(n/q*100,0,100)}%"></i></div></div>`}
+function mis(label,n,q,extra=''){if(!q)return'';const ok=n>=q;return`<div class="mis"><div class="row"><span class="g">${label}</span><span class="${ok?'ok':'mut'}">${ok?'✔ ':''}${q>999?fmtN(n)+' / '+fmtN(q):n+'/'+q}${extra}</span></div><div class="bar"><i style="width:${clamp(n/q*100,0,100)}%"></i></div></div>`}
 function dayChecks(d){const D=dget(d),tr=S.travel&&d===today();
   let h=`<button class="chk ${D.walk?'on':''}" data-a="walk" data-d="${d}">🐕 <span>${tr?'10 min de marche (pause trajet, tour de l’hôtel)':'Marche du soir avec le chien'}</span><b>${D.walk?'✔':'+10 XP'}</b></button>
   <label>Alimentation du jour</label><div class="seg3">${[['effort','💪 Effort'],['normal','👌 Normale'],['exces','🍕 Excès']].map(([k,l])=>`<button class="${D.food===k?'on '+k:''}" data-a="food" data-d="${d}" data-k="${k}">${l}</button>`).join('')}</div>`;
@@ -400,7 +401,7 @@ function vToday(x,L){const d=today(),D=dget(d),ws=weekStats(monday(d)),p=ws.plan
   if(S.settings.micro){const n=Math.max(2,Math.round(pg('pompes').t/2)),m=D.micro||0;
     h+=`<button class="chk ${m>=3?'on':''}" style="margin-top:10px" data-a="micro">⚡ <span>Micro-défi bureau : ${n} ${EX.pompes.variants[pg('pompes').v].n.toLowerCase()}, là, maintenant</span><b>${m}/3</b></button>`}
   h+=`</div><div class="card"><h3>Cette semaine ${ws.valid?'<span class="pill acc">🏆 validée</span>':''}</h3>
-    ${mis('💪 Muscu',ws.renfo,p.renfo)}${mis('🚵 Cardio',ws.cardio,p.cardio)}${mis('🪓 Activité libre',ws.libre,p.libre)}${mis('🐕 Marches',ws.walk,p.walk)}
+    ${mis('💪 Muscu',ws.renfo,p.renfo)}${mis('🚵 Cardio',ws.cardio,p.cardio)}${mis('🪓 Activité libre',ws.libre,p.libre)}${mis('🐕 Marches',ws.walk,p.walk)}${mis('👟 Pas',ws.steps,ws.stepsGoal)}
     <div class="mis row small"><span class="g">🍽️ Alimentation</span><span class="${ws.food.effort>=2?'acc':'mut'}">${ws.food.effort}/2 effort</span><span class="${ws.food.exces>1?'bad':'mut'}">${ws.food.exces}/1 excès max</span></div>
     <div class="btns">${ws.weighed?'<span class="acc small">✔ Pesée faite</span>':'<button data-a="weight">⚖️ Pesée de la semaine</button>'}${p.test&&!ws.tested?'<button data-a="test">🧪 Test de forme</button>':''}</div></div>`;
   return h}
@@ -413,7 +414,7 @@ function vWeek(){const cm=monday(today());wk=wk&&wk<=cm?wk:cm;const first=monday
       return`<button class="${d===t?'today':''}" data-a="day" data-d="${d}" ${d>t?'disabled':''}><span class="mut">${'LMMJVSD'[i]}</span><b>${parse(d).getDate()}</b><span class="dots">${D.walk?'<i style="background:var(--blue)"></i>':''}${a.map(()=>'<i style="background:var(--acc)"></i>').join('')}</span><span class="fbar ${D.food||''}"></span></button>`}).join('')}</div>
     <p class="mut small" style="margin:8px 0 0">Touche un jour pour le compléter. <span style="color:var(--blue)">●</span> marche <span class="acc">●</span> séance, barre = alimentation.</p></div>
   <div class="card"><h3>Missions ${ws.perfect?'<span class="pill acc">💎 parfaite</span>':ws.valid?'<span class="pill acc">🏆 validée</span>':''}</h3>
-    ${mis('💪 Muscu haut du corps',ws.renfo,p.renfo)}${mis(`🚵 Cardio (vélo ~${p.km} km${p.reps?`, dont 1 fractionné ${p.reps}×30 s`:''})`,ws.cardio,p.cardio)}${mis('🪓 Activité libre 30 min+',ws.libre,p.libre)}${mis('🐕 Marches du soir',ws.walk,p.walk)}
+    ${mis('💪 Muscu haut du corps',ws.renfo,p.renfo)}${mis(`🚵 Cardio (vélo ~${p.km} km${p.reps?`, dont 1 fractionné ${p.reps}×30 s`:''})`,ws.cardio,p.cardio)}${mis('🪓 Activité libre 30 min+',ws.libre,p.libre)}${mis('🐕 Marches du soir',ws.walk,p.walk)}${mis('👟 Pas de la semaine',ws.steps,ws.stepsGoal)}
     <div class="mis row small"><span class="g">🍽️ ${ws.food.effort} effort · ${ws.food.normal} normale · ${ws.food.exces} excès</span><span class="${ws.foodOk?'acc':'mut'}">${ws.foodOk?'✔ règle tenue':'2 efforts mini, 1 excès maxi'}</span></div>
     <div class="mis row small"><span class="g">⚖️ Pesée</span><span class="${ws.weighed?'acc':'mut'}">${ws.weighed?'✔':'à faire'}</span></div>
     ${p.test?`<div class="mis row small"><span class="g">🧪 Test de forme</span><span class="${ws.tested?'acc':'mut'}">${ws.tested?'✔':'à faire'}</span></div>`:''}
@@ -501,7 +502,7 @@ function pForce(){const T=S.tests;const prs=S.acts.flatMap(a=>(a.prs||[]).map(p=
 function pHabits(){const weeks=weeksList().reverse().slice(0,10);
   const sp=[];for(let d=S.profile.start;d<=today();d=addDays(d,1)){const v=dget(d).steps||estSteps(d);if(v)sp.push([dayX(d),v])}
   const l7=[...Array(7)].map((_,i)=>{const d=addDays(today(),-i);return dget(d).steps||estSteps(d)}).filter(Boolean);
-  let h=`<div class="card"><h3>Pas par jour ${l7.length?`<span class="pill">moy. 7 j : ${fmtN(avg(l7))}</span>`:''}</h3>${chart([{pts:sp,dots:1,c:'#6cc5ff'}],{y0:0,xf:xDate})}<p class="mut small" style="margin:6px 0 0">Chiffre saisi dans le check du jour ; à défaut, estimation d’après tes marches GPS (≈ ${fmtN(stepsOf(1))} pas par km pour ta taille).</p></div>`;
+  let h=`<div class="card"><h3>Pas par jour ${l7.length?`<span class="pill">moy. 7 j : ${fmtN(avg(l7))}</span>`:''}</h3>${chart([{pts:sp,dots:1,c:'#6cc5ff'}],{y0:0,xf:xDate})}<p class="mut small" style="margin:6px 0 0">Objectif : ${fmtN(S.settings.stepsGoal)} pas par semaine (2 XP par 1 000 pas, +50 XP à l’objectif). Chiffre saisi dans le check du jour ; à défaut, estimation d’après tes marches GPS (≈ ${fmtN(stepsOf(1))} pas par km pour ta taille).</p></div>`;
   h+=`<div class="card"><h3>Alimentation</h3><p class="mut small" style="margin:0 0 6px">Règle : au moins 2 jours « effort », 1 excès maximum par semaine.</p>${weeks.map(m=>{const ws=weekStats(m);
     return`<div class="li"><span class="mut small" style="width:34px">S${weekNo(m)}</span><span class="g row" style="gap:4px">${[...Array(7)].map((_,i)=>`<span class="fbar ${dget(addDays(m,i)).food||''}" style="width:auto;flex:1;height:14px"></span>`).join('')}</span><span>${ws.foodOk?'✔':''}</span></div>`}).join('')}</div>`;
   if(S.settings.conso){const pts=k=>weeksList().map(m=>{const v=[...Array(7)].map((_,i)=>dget(addDays(m,i))[k]).filter(x=>x!=null);return v.length?[weekNo(m),avg(v)]:null}).filter(Boolean);
@@ -583,7 +584,7 @@ function settingsForm(){const p=S.profile,s=S.settings;navigator.storage?.persis
   openModal(`<h2>Réglages</h2>
   <h3 style="margin-top:16px">Objectif</h3>
   <div class="grid2" style="margin:0"><div><label>Poids de départ (kg)</label><input type="number" step="0.1" data-s="profile.startWeight" value="${p.startWeight}"></div><div><label>Objectif (kg)</label><input type="number" step="0.1" data-s="profile.goalWeight" value="${p.goalWeight}"></div>
-  <div><label>Taille (cm)</label><input type="number" data-s="profile.height" value="${p.height}"></div><div></div>
+  <div><label>Taille (cm)</label><input type="number" data-s="profile.height" value="${p.height}"></div><div><label>Objectif pas / semaine</label><input type="number" step="1000" data-s="settings.stepsGoal" value="${s.stepsGoal}"></div>
   <div><label>Début du programme</label><input type="date" data-s="profile.start" value="${p.start}"></div><div><label>Date cible</label><input type="date" data-s="profile.goalDate" value="${p.goalDate}"></div></div>
   <h3 style="margin-top:18px">Entraînement</h3>
   <div class="grid2" style="margin:0"><div><label>Seuil rythme élevé vélo (km/h)</label><input type="number" step="0.5" data-s="settings.thr.velo" value="${s.thr.velo}"></div><div><label>Seuil rythme élevé marche (km/h)</label><input type="number" step="0.1" data-s="settings.thr.marche" value="${s.thr.marche}"></div>
@@ -679,7 +680,7 @@ document.addEventListener('change',e=>{const el=e.target;
   else if(el.id==='phIn'&&el.files[0])addPhoto(el.files[0],phTag);
   else if(el.id==='bakIn'&&el.files[0])importAll(el.files[0]);
   else if(el.dataset.c==='cmpA'){cmp.a=el.value;render()}else if(el.dataset.c==='cmpB'){cmp.b=el.value;render()}
-  else if(el.dataset.steps){const v=Math.round(+el.value);const D=day(el.dataset.steps);if(v>0){D.steps=v;toast('👟 '+fmtN(v)+' pas notés')}else delete D.steps;save()}
+  else if(el.dataset.steps){const v=Math.round(+el.value);const D=day(el.dataset.steps);const b=xpCalc();if(v>0)D.steps=v;else delete D.steps;const g=xpCalc()-b;after(v>0?`👟 ${fmtN(v)} pas notés${g>0?' · +'+g+' XP':''}`:'');if(dayOpen)dayModal(dayOpen)}
   else if(el.dataset.s){const path=el.dataset.s.split('.');let o=S;while(path.length>1)o=o[path.shift()];
     const v=el.type==='checkbox'?el.checked:el.type==='number'?+el.value:el.value;if(el.type==='number'&&!(v>0))return;if(el.type==='date'&&!v)return;o[path[0]]=v;save();
     if(el.dataset.s.startsWith('settings.thr'))recompute();else render()}});
