@@ -136,13 +136,17 @@ const DB=(()=>{let p;
   return{get:(s,k)=>tx(s,'readonly',o=>o.get(k)),set:(s,k,v)=>tx(s,'readwrite',o=>o.put(v,k)),del:(s,k)=>tx(s,'readwrite',o=>o.delete(k)),
     keys:s=>tx(s,'readonly',o=>o.getAllKeys()),clear:s=>tx(s,'readwrite',o=>o.clear())}})();
 
-const DEF=()=>({v:1,profile:{start:today(),startWeight:100,goalWeight:90,goalDate:'2027-03-17'},
+const DEF=()=>({v:1,profile:{start:today(),startWeight:100,goalWeight:90,goalDate:'2027-03-17',height:188},
   settings:{conso:true,thr:{velo:18,marche:5.5},rest:75,sound:true,tMidi:'12:15',tSoir:'21:30',micro:true},
   days:{},acts:[],weights:[],photos:[],tests:[],prog:{},best:{},lastRenfo:'B',travel:false,badges:{},lastLevel:0,weeksDone:{}});
 let S=DEF();
 let saveT;const save=()=>{clearTimeout(saveT);saveT=setTimeout(()=>DB.set('kv','state',S).catch(e=>toast('Erreur de sauvegarde : '+e)),150)};
 const day=d=>S.days[d]||(S.days[d]={});
 const dget=d=>S.days[d]||{};
+// Pas estimés : foulée de marche ≈ 0,415 × taille
+const stepsOf=km=>Math.round(km*1000/(0.415*(S.profile.height||188)/100));
+const estSteps=d=>S.acts.filter(a=>a.date===d&&a.type==='marche'&&a.dist).reduce((n,a)=>n+stepsOf(a.dist),0);
+const fmtN=n=>Math.round(n).toLocaleString('fr-FR');
 
 /* ================= programme ================= */
 const TYPES={
@@ -371,6 +375,7 @@ function mis(label,n,q,extra=''){if(!q)return'';const ok=n>=q;return`<div class=
 function dayChecks(d){const D=dget(d),tr=S.travel&&d===today();
   let h=`<button class="chk ${D.walk?'on':''}" data-a="walk" data-d="${d}">🐕 <span>${tr?'10 min de marche (pause trajet, tour de l’hôtel)':'Marche du soir avec le chien'}</span><b>${D.walk?'✔':'+10 XP'}</b></button>
   <label>Alimentation du jour</label><div class="seg3">${[['effort','💪 Effort'],['normal','👌 Normale'],['exces','🍕 Excès']].map(([k,l])=>`<button class="${D.food===k?'on '+k:''}" data-a="food" data-d="${d}" data-k="${k}">${l}</button>`).join('')}</div>`;
+  const es=estSteps(d);h+=`<div class="row cnt"><span class="g">👟 Pas du jour <span class="mut small">${es?'(GPS : ≈ '+fmtN(es)+')':'(chiffre de ta montre)'}</span></span><input type="number" inputmode="numeric" min="0" style="width:104px;text-align:right" data-steps="${d}" value="${D.steps??''}" placeholder="${es?'≈ '+fmtN(es):'–'}"></div>`;
   if(S.settings.conso)h+=[['cig','🚬 Cigarettes'],['coca','🥤 Coca']].map(([k,l])=>`<div class="row cnt"><span class="g">${l}</span><button data-a="cnt" data-d="${d}" data-k="${k}" data-n="-1">−</button><b>${D[k]??'–'}</b><button data-a="cnt" data-d="${d}" data-k="${k}" data-n="1">+</button></div>`).join('');
   return h}
 function vToday(x,L){const d=today(),D=dget(d),ws=weekStats(monday(d)),p=ws.plan,pr=S.profile,cur=curW();
@@ -420,12 +425,12 @@ function vWeek(){const cm=monday(today());wk=wk&&wk<=cm?wk:cm;const first=monday
   return h}
 
 /* ================= vue Activités ================= */
-const actSum=a=>[a.sub&&a.type==='jardin'?a.sub:null,a.dur?a.dur+' min':null,a.dist?n1(a.dist)+' km':null,a.stats?n1(a.stats.avg)+' km/h':null].filter(Boolean).join(' · ');
+const actSum=a=>[a.sub&&a.type==='jardin'?a.sub:null,a.dur?a.dur+' min':null,a.dist?n1(a.dist)+' km':null,a.stats?n1(a.stats.avg)+' km/h':null,a.type==='marche'&&a.dist?'≈ '+fmtN(stepsOf(a.dist))+' pas':null].filter(Boolean).join(' · ');
 function vActs(){const list=[...S.acts].sort((a,b)=>b.date.localeCompare(a.date)||b.id.localeCompare(a.id));
   return`<div class="card"><h3>Enregistrer</h3><div class="btns" style="margin-top:0"><button class="pri" data-a="gps" data-t="velo">▶ GPS vélo</button><button data-a="gps" data-t="marche">▶ GPS marche</button><button data-a="gpx">⬆ Importer GPX</button><button data-a="form">＋ Saisie manuelle</button></div>
   <p class="mut small" style="margin:10px 0 0">GPS en direct : l’écran doit rester allumé (téléphone sur le guidon ou en main). Sinon enregistre avec ta montre et importe le fichier GPX.</p></div>
   <div class="card"><h3>Journal</h3>${list.length?list.map(a=>`<button class="li" data-a="act" data-id="${a.id}"><span class="ic">${TYPES[a.type]?.i||'✨'}</span><span class="g"><b>${TYPES[a.type]?.n||a.type}${a.type==='renfo'?' '+a.sub:''}</b><div class="mut small">${fmtD(a.date)} · ${actSum(a)}</div></span>${a.prs?.length?'<span class="amb">🏅</span>':''}<span class="mut">›</span></button>`).join(''):'<p class="mut small">Rien encore. Ta première séance apparaîtra ici.</p>'}</div>`}
-function actDetail(a){const s=a.stats;let h=`<h2>${TYPES[a.type].i} ${TYPES[a.type].n}${a.type==='renfo'?' · séance '+a.sub:''}</h2><p class="mut">${fmtD(a.date,{weekday:'long',day:'numeric',month:'long'})}${a.rpe?' · '+RPE[a.rpe-1]:''}${a.sub&&a.type==='jardin'?' · '+esc(a.sub):''}</p>`;
+function actDetail(a){const s=a.stats;let h=`<h2>${TYPES[a.type].i} ${TYPES[a.type].n}${a.type==='renfo'?' · séance '+a.sub:''}</h2><p class="mut">${fmtD(a.date,{weekday:'long',day:'numeric',month:'long'})}${a.rpe?' · '+RPE[a.rpe-1]:''}${a.sub&&a.type==='jardin'?' · '+esc(a.sub):''}${a.type==='marche'&&a.dist?' · ≈ '+fmtN(stepsOf(a.dist))+' pas':''}</p>`;
   if(s){h+=`<div class="grid3"><div class="stat"><b>${n1(s.dist,2)}</b><span>km</span></div><div class="stat"><b>${clock(s.mov)}</b><span>en mouvement</span></div><div class="stat"><b>${n1(s.avg)}</b><span>km/h moyenne</span></div>
       <div class="stat"><b>${n1(s.p10)}</b><span>km/h basse</span></div><div class="stat"><b>${n1(s.p90)}</b><span>km/h haute</span></div><div class="stat"><b>${n1(s.vmax)}</b><span>km/h max</span></div></div>
     ${chart([{pts:s.series},{pts:[[0,s.thr],[s.series[s.series.length-1][0],s.thr]],c:'#ffb454',dash:1,wd:1}],{y0:0,xf:v=>Math.round(v)+' min'})}
@@ -494,7 +499,10 @@ function pForce(){const T=S.tests;const prs=S.acts.flatMap(a=>(a.prs||[]).map(p=
   <div class="card"><h3>Derniers records</h3>${prs.length?prs.map(x=>`<div class="li"><span>🏅</span><span class="g">${esc(x.p)}</span><span class="mut small">${fmtD(x.d,{day:'numeric',month:'short'})}</span></div>`).join(''):'<p class="mut small">Tes records de séance apparaîtront ici.</p>'}</div>
   <div class="card"><h3>Volume</h3><div class="grid3" style="margin:0"><div class="stat"><b>${S.acts.filter(a=>a.type==='renfo').length}</b><span>séances muscu</span></div><div class="stat"><b>${S.acts.filter(a=>a.type==='hotel').length}</b><span>plans B</span></div><div class="stat"><b>${Object.values(S.days).reduce((s,d)=>s+(d.micro||0),0)}</b><span>micro-défis</span></div></div></div>`}
 function pHabits(){const weeks=weeksList().reverse().slice(0,10);
-  let h=`<div class="card"><h3>Alimentation</h3><p class="mut small" style="margin:0 0 6px">Règle : au moins 2 jours « effort », 1 excès maximum par semaine.</p>${weeks.map(m=>{const ws=weekStats(m);
+  const sp=[];for(let d=S.profile.start;d<=today();d=addDays(d,1)){const v=dget(d).steps||estSteps(d);if(v)sp.push([dayX(d),v])}
+  const l7=[...Array(7)].map((_,i)=>{const d=addDays(today(),-i);return dget(d).steps||estSteps(d)}).filter(Boolean);
+  let h=`<div class="card"><h3>Pas par jour ${l7.length?`<span class="pill">moy. 7 j : ${fmtN(avg(l7))}</span>`:''}</h3>${chart([{pts:sp,dots:1,c:'#6cc5ff'}],{y0:0,xf:xDate})}<p class="mut small" style="margin:6px 0 0">Chiffre saisi dans le check du jour ; à défaut, estimation d’après tes marches GPS (≈ ${fmtN(stepsOf(1))} pas par km pour ta taille).</p></div>`;
+  h+=`<div class="card"><h3>Alimentation</h3><p class="mut small" style="margin:0 0 6px">Règle : au moins 2 jours « effort », 1 excès maximum par semaine.</p>${weeks.map(m=>{const ws=weekStats(m);
     return`<div class="li"><span class="mut small" style="width:34px">S${weekNo(m)}</span><span class="g row" style="gap:4px">${[...Array(7)].map((_,i)=>`<span class="fbar ${dget(addDays(m,i)).food||''}" style="width:auto;flex:1;height:14px"></span>`).join('')}</span><span>${ws.foodOk?'✔':''}</span></div>`}).join('')}</div>`;
   if(S.settings.conso){const pts=k=>weeksList().map(m=>{const v=[...Array(7)].map((_,i)=>dget(addDays(m,i))[k]).filter(x=>x!=null);return v.length?[weekNo(m),avg(v)]:null}).filter(Boolean);
     h+=`<div class="card"><h3>Cigarettes par jour (moyenne hebdo)</h3>${chart([{pts:pts('cig'),dots:1,c:'#ffb454'}],{y0:0,xf:v=>'S'+Math.round(v),dec:0})}</div>
@@ -575,6 +583,7 @@ function settingsForm(){const p=S.profile,s=S.settings;navigator.storage?.persis
   openModal(`<h2>Réglages</h2>
   <h3 style="margin-top:16px">Objectif</h3>
   <div class="grid2" style="margin:0"><div><label>Poids de départ (kg)</label><input type="number" step="0.1" data-s="profile.startWeight" value="${p.startWeight}"></div><div><label>Objectif (kg)</label><input type="number" step="0.1" data-s="profile.goalWeight" value="${p.goalWeight}"></div>
+  <div><label>Taille (cm)</label><input type="number" data-s="profile.height" value="${p.height}"></div><div></div>
   <div><label>Début du programme</label><input type="date" data-s="profile.start" value="${p.start}"></div><div><label>Date cible</label><input type="date" data-s="profile.goalDate" value="${p.goalDate}"></div></div>
   <h3 style="margin-top:18px">Entraînement</h3>
   <div class="grid2" style="margin:0"><div><label>Seuil rythme élevé vélo (km/h)</label><input type="number" step="0.5" data-s="settings.thr.velo" value="${s.thr.velo}"></div><div><label>Seuil rythme élevé marche (km/h)</label><input type="number" step="0.1" data-s="settings.thr.marche" value="${s.thr.marche}"></div>
@@ -670,6 +679,7 @@ document.addEventListener('change',e=>{const el=e.target;
   else if(el.id==='phIn'&&el.files[0])addPhoto(el.files[0],phTag);
   else if(el.id==='bakIn'&&el.files[0])importAll(el.files[0]);
   else if(el.dataset.c==='cmpA'){cmp.a=el.value;render()}else if(el.dataset.c==='cmpB'){cmp.b=el.value;render()}
+  else if(el.dataset.steps){const v=Math.round(+el.value);const D=day(el.dataset.steps);if(v>0){D.steps=v;toast('👟 '+fmtN(v)+' pas notés')}else delete D.steps;save()}
   else if(el.dataset.s){const path=el.dataset.s.split('.');let o=S;while(path.length>1)o=o[path.shift()];
     const v=el.type==='checkbox'?el.checked:el.type==='number'?+el.value:el.value;if(el.type==='number'&&!(v>0))return;if(el.type==='date'&&!v)return;o[path[0]]=v;save();
     if(el.dataset.s.startsWith('settings.thr'))recompute();else render()}});
